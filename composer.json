@@ -42,6 +42,7 @@
         "php-ds/php-ds": "*",
         "peehaa/async-twitter": "dev-master",
         "ekinhbayar/interval-parser": "^0.1",
+        "ekinhbayar/brill-tagger": "^0.3",
         "rdlowrey/auryn": "^1.1",
         "room11/openid": "~1.0",
         "room11/dom-utils": "~1.0",
