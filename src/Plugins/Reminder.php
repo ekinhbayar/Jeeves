@@ -281,6 +281,7 @@ class Reminder extends BasePlugin
 
         # Tag parts of message before transforming for the target
         $partsOfMessage = $this->tagMessageParts($message);
+        print_r($partsOfMessage);
         if (!$partsOfMessage) {
             return $this->chatClient->postReply($command, "Could not understand that message. NLP is hard, yo.");
         }
@@ -290,15 +291,15 @@ class Reminder extends BasePlugin
             $username  = null; # getUserName()
             $tag       = $part['tag'];
             $token     = $part['token'];
-            $prevToken = $partsOfMessage[$key - 1][$key]['token'];
-            $nextToken = $partsOfMessage[$key + 1][$key]['token'];
+            $prevToken = $partsOfMessage[$key - 1]['token'] ?? '';
+            $nextToken = $partsOfMessage[$key + 1]['token'] ?? '';
 
             switch (strtolower($token)) {
                 case 'to':
                 case 'not': # [ to not do something | not to miss ]
                     if($prevToken != 'do' && $key < 3){
 
-                        if ($token != $nextToken && in_array($nextToken, ['to', 'not'])) {
+                        if (in_array($nextToken, ['to', 'not'])) {
                             $token .= '\s' . $nextToken;
                             $message = preg_replace("/{$token}/", "don't", $message, 1);
                             break;
