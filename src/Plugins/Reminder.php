@@ -27,7 +27,7 @@ class Reminder extends BasePlugin
 
     const USAGE = "Usage: `!!reminder [ examples | list | <text> [ at <time> | in <delay> ] | unset <id> ]` Try `!!reminder examples`" ;
     const REMINDER_REGEX = "/(.*)\s+(?:in|at)\s+(.*)/ui";
-    const USERNAME_REGEX = "/^@(?<username>.*)/ui";
+    const USERNAME_REGEX = "/^@(?<username>[\w.,'\"-]+)/ui";
     const TIME_FORMAT_REGEX = "/(?<time>(?:\d|[01]\d|2[0-3]):[0-5]\d)[+-]?(?&time)?/ui";
 
     public function __construct(
@@ -52,7 +52,7 @@ class Reminder extends BasePlugin
 
             $reminders = yield $this->storage->getKeys($command->getRoom());
             if ($reminders) {
-                foreach ($reminders as $key){
+                foreach ($reminders as $key) {
                     $key = (string) $key;
                     yield $this->storage->unset($key, $command->getRoom());
                 }
@@ -84,7 +84,7 @@ class Reminder extends BasePlugin
             $message = "Registered reminders are:";
 
             $reminders = yield $this->storage->getAll($command->getRoom());
-            if(!$reminders){
+            if (!$reminders) {
                 return $this->chatClient->postMessage($command->getRoom(), "There aren't any scheduled reminders.");
             }
 
@@ -113,7 +113,7 @@ class Reminder extends BasePlugin
                 );
             }
 
-            if(count($timeouts) !== count($reminders)){
+            if (count($timeouts) !== count($reminders)) {
                 return $this->chatClient->postMessage($command->getRoom(), $message);
             }
         });
@@ -125,12 +125,12 @@ class Reminder extends BasePlugin
 
             $intervalParser = new IntervalParser();
 
-            switch ($commandName){
+            switch ($commandName) {
                 case 'in':
                     $parameters = $intervalParser->normalizeTimeInterval(implode(" ", $command->getParameters()));
                     $expression = IntervalParser::$intervalSeparatorDefinitions . IntervalParser::$intervalWithTrailingData;
 
-                    if(preg_match($expression, $parameters, $matches)){
+                    if (preg_match($expression, $parameters, $matches)) {
                         $time = $matches['interval'] ?? false;
                         $text = $matches['trailing'] ?? false;
                     }
@@ -138,31 +138,31 @@ class Reminder extends BasePlugin
                 case 'at':
                     $time = $command->getParameter(0) ?? false; // 24hrs
 
-                    if($time && preg_match(self::TIME_FORMAT_REGEX, $time)){
+                    if ($time && preg_match(self::TIME_FORMAT_REGEX, $time)) {
                         $text = implode(" ", array_diff($command->getParameters(), array($time)));
                     }
                     break;
                 case 'reminder':
                     $parameters = implode(" ", $command->getParameters());
 
-                    if(!preg_match(self::REMINDER_REGEX, $parameters, $matches)){
+                    if (!preg_match(self::REMINDER_REGEX, $parameters, $matches)) {
                         return $this->chatClient->postMessage($command->getRoom(), self::USAGE);
                     }
 
                     $time = $matches[2] ?? '';
                     $string = $matches[1] ?? '';
-                    if(!$string || !$time) break;
+                    if (!$string || !$time) break;
 
                     $textOrUser = $command->getParameter(0);
                     $setBy = $command->getUserName();
 
                     # Find the target for message
-                    $output  = $this->findTargetAndMessage($textOrUser, $string, $setBy);
+                    $output  = $this->findTargetAndMessage($command->getRoom(), $textOrUser, $string, $setBy);
                     $target  = $output['target'];
                     $message = $output['message'];
 
                     # Only an admin can set a reminder for someone else
-                    if(!in_array($textOrUser, ['me', 'everyone', 'yourself']) && strtolower($setBy) !== strtolower($target)){
+                    if (!in_array($textOrUser, ['me', 'everyone', 'yourself']) && strtolower($setBy) !== strtolower($target)) {
                         if (!yield $this->admin->isAdmin($command->getRoom(), $command->getUserId())) {
                             return $this->chatClient->postReply($command, "Only an admin can set a reminder for someone else.");
                         }
@@ -181,8 +181,8 @@ class Reminder extends BasePlugin
 
             $for = $textOrUser ?? '';
 
-            if(empty($time)) return $this->chatClient->postMessage($command->getRoom(), "Have a look at the time again, yo!");
-            if(empty($text)) return $this->chatClient->postMessage($command->getRoom(), self::USAGE);
+            if (empty($time)) return $this->chatClient->postMessage($command->getRoom(), "Have a look at the time again, yo!");
+            if (empty($text)) return $this->chatClient->postMessage($command->getRoom(), self::USAGE);
 
             $timestamp = strtotime($time) ?: strtotime("+{$time}"); // false|int
             if (!$timestamp) return $this->chatClient->postMessage($command->getRoom(), "Have a look at the time again, yo!");
@@ -201,14 +201,14 @@ class Reminder extends BasePlugin
             $seconds = $timestamp - time();
             if ($seconds <= 0) return $this->chatClient->postReply($command, "I guess I'm late: " . $text);
 
-            if(yield $this->storage->set($key, $value, $command->getRoom())){
+            if (yield $this->storage->set($key, $value, $command->getRoom())) {
 
                 $watcher = once(function () use ($command, $value, $key) {
                     yield $this->storage->unset($key, $command->getRoom());
 
-                    if(in_array($value['for'], ["everyone","yourself"])){
+                    if (in_array($value['for'], ["everyone","yourself"])) {
                         return $this->chatClient->postMessage($command->getRoom(), $value['text']);
-                    } elseif ($value['for'] !== $value['username']){
+                    } elseif ($value['for'] !== $value['username']) {
                         return $this->chatClient->postMessage($command->getRoom(), $value['text'], PostFlags::ALLOW_PINGS);
                     }
                     # else reply to the setter
@@ -226,17 +226,28 @@ class Reminder extends BasePlugin
     /**
      * Find the intended target of message
      *
+     * @param ChatRoom $room
      * @param string $textOrTarget  First parameter of message
      * @param string $message       Reminder text
      * @param string $setBy         $setBy
      * @return array
      */
-    private function findTargetAndMessage(string $textOrTarget, string $message, string $setBy): array
+    private function findTargetAndMessage(ChatRoom $room, string $textOrTarget, string $message, string $setBy)
     {
         $pings = [];
         $substring = false;
 
-        switch ($textOrTarget){
+        if (substr_count($message, '@') >= 1) {
+            foreach (explode(" ", $message) as $key => $text) {
+                if (preg_match(self::USERNAME_REGEX, $text, $matches)) {
+                    if (null !== $pingableName = yield $this->chatClient->getPingableName($room, $matches['username'])) {
+                        $pings[] = "@{$pingableName}";
+                    }
+                }
+            }
+        }
+
+        switch ($textOrTarget) {
             case 'me':
                 $target = $setBy;
                 break;
@@ -247,13 +258,11 @@ class Reminder extends BasePlugin
                 $target  = 'myself';
                 break;
             default:
-                if(preg_match(self::USERNAME_REGEX, $textOrTarget, $matches)){
-                    $pings[] = $matches['username'];
-                }
-
-                if($pings) {
-                    $target = (count($matches) > 1) ? implode(", ", $pings) : $matches['username'];
-                    break;
+                if ($pings && isset($matches)) {
+                    return [
+                        'target'  => (count($matches) > 1) ? implode(", ", $pings) : $matches['username'],
+                        'message' => substr($message, strrpos($message, "@") + strlen($pings[count($pings)-1]))
+                    ];
                 }
 
                 $target = $setBy;
@@ -287,7 +296,7 @@ class Reminder extends BasePlugin
         }
 
         # remind me [ to grab a beer | that Ace is waiting me | I am late ] in 2hrs
-        foreach ($partsOfMessage as $key => $part){
+        foreach ($partsOfMessage as $key => $part) {
             $username  = null; # getUserName()
             $tag       = $part['tag'];
             $token     = $part['token'];
@@ -297,7 +306,7 @@ class Reminder extends BasePlugin
             switch (strtolower($token)) {
                 case 'to':
                 case 'not': # [ to not do something | not to miss ]
-                    if($prevToken != 'do' && $key < 3){
+                    if ($prevToken != 'do' && $key < 3) {
 
                         if (in_array($nextToken, ['to', 'not'])) {
                             $token .= '\s' . $nextToken;
@@ -320,9 +329,9 @@ class Reminder extends BasePlugin
                         : $this->translatePronouns($message, $username);
                     break;
                 case 'that':
-                    if($key == 0) $message = preg_replace("/{$token}/", '', $message, 1);
+                    if ($key == 0) $message = preg_replace("/{$token}/", '', $message, 1);
 
-                    if(in_array($target, ['everyone', $command->getUserName()])){
+                    if (in_array($target, ['everyone', $command->getUserName()])) {
 
                         $message = ($prevToken == 'about')
                             ? preg_replace("/about/", 'remember', $message, 1)
@@ -330,7 +339,7 @@ class Reminder extends BasePlugin
 
                     }
 
-                    if($prevToken == 'about') $message = preg_replace("/{$token}/", '', $message, 1);
+                    if ($prevToken == 'about') $message = preg_replace("/{$token}/", '', $message, 1);
                     break;
                 case 'yourself': # remind yourself that you are a bot, jeez.
                     $message = preg_replace("/{$token}/", '', $message, 1);
@@ -369,14 +378,14 @@ class Reminder extends BasePlugin
         ];
 
         # Check whether the sentence is terminated already
-        if(!in_array(substr(trim($message), -1), [ '.', '!', '?' ])) $message .= '. ';
+        if (!in_array(substr(trim($message), -1), [ '.', '!', '?' ])) $message .= '. ';
 
         if ($target == "everyone") {
             $message = 'o/ everyone, ' . $message;
         } elseif ($target == 'myself') {
             $message = ':-) ' . $message;
         } elseif ($setBy == $target) {
-            if(random_int(0, 100) > 95) $message .= $grumbles[array_rand($grumbles)];
+            if (random_int(0, 100) > 95) $message .= $grumbles[array_rand($grumbles)];
             $message = "@{$target}" . ', '. $message;
         } else {
             $body = ' earlier ' . $setBy . $starters[array_rand($starters)]. $message;
@@ -424,9 +433,9 @@ class Reminder extends BasePlugin
                 $matches = array_filter($matches);
                 $object  = strtolower($matches['obj']);
 
-                switch($object){
+                switch($object) {
                     case 'i':
-                        if($setBy){
+                        if ($setBy) {
                             $o = $setBy;
                             break;
                         }
@@ -465,8 +474,8 @@ class Reminder extends BasePlugin
                         break;
                 }
 
-                if(isset($matches['part'])){
-                    switch($part = strtolower($matches['part'])){
+                if (isset($matches['part'])) {
+                    switch($part = strtolower($matches['part'])) {
                         case "'re":
                         case "are":
                             $o .= ($object != 'you') ? ' '.$part : 'am ';
@@ -491,7 +500,7 @@ class Reminder extends BasePlugin
                     }
                 }
 
-                if(isset($matches['neg'])) $o .= ' not ';
+                if (isset($matches['neg'])) $o .= ' not ';
 
                 return $o;
             }, $message
@@ -507,7 +516,7 @@ class Reminder extends BasePlugin
 
     public function apologizeForExpiredReminders(ChatRoom $room, array $reminders): \Generator
     {
-        if(!$reminders) return;
+        if (!$reminders) return;
 
         foreach ($reminders as $key) {
             $key = (string) $key;
@@ -516,7 +525,7 @@ class Reminder extends BasePlugin
             $stamp = $value['timestamp'];
             $seconds = $stamp - time();
 
-            if($seconds > 0) continue;
+            if ($seconds > 0) continue;
 
             $reply = "I guess I'm late but, " . $text;
 
@@ -529,11 +538,11 @@ class Reminder extends BasePlugin
 
     public function rescheduleUpcomingReminders(ChatRoom $room, array $reminders): \Generator
     {
-        if(!$reminders) return;
+        if (!$reminders) return;
 
         $this->watchers = [];
 
-        foreach ($reminders as $key){
+        foreach ($reminders as $key) {
             $key = (string) $key;
             $value = yield $this->storage->get($key, $room);
             $text  = $value['text'];
@@ -571,7 +580,7 @@ class Reminder extends BasePlugin
             $textOrCommand = $command->getParameter(0);
             $commandName = $command->getCommandName(); // <reminder|in|at>
 
-            switch ($commandName){
+            switch ($commandName) {
                 case 'in':
                     return yield $this->setReminder($command, 'in');
                 case 'at':
@@ -580,8 +589,8 @@ class Reminder extends BasePlugin
                     break;
             }
 
-            if (count(array_diff($command->getParameters(), array($textOrCommand))) < 1){
-                switch ($textOrCommand){
+            if (count(array_diff($command->getParameters(), array($textOrCommand))) < 1) {
+                switch ($textOrCommand) {
                     case 'list':
                         return yield $this->getAllReminders($command);
                     case 'examples':
@@ -591,16 +600,16 @@ class Reminder extends BasePlugin
                 }
             }
 
-            if( $command->getParameter(0) === 'unset'
+            if ( $command->getParameter(0) === 'unset'
                 && $command->getParameter(1) !== null
                 && count($command->getParameters()) <= 2
-            ){ return yield $this->unset($command); }
+            ) { return yield $this->unset($command); }
 
             return yield $this->setReminder($command, 'reminder');
         });
     }
 
-    public function enableForRoom(ChatRoom $room, bool $persist = true){
+    public function enableForRoom(ChatRoom $room, bool $persist = true) {
         $this->tagger = new BrillTagger();
         $reminders = yield $this->storage->getKeys($room);
 
@@ -608,10 +617,10 @@ class Reminder extends BasePlugin
         yield from $this->apologizeForExpiredReminders($room, $reminders);
     }
 
-    public function disableForRoom(ChatRoom $room, bool $persist = false){
-        if(!$this->watchers) return;
+    public function disableForRoom(ChatRoom $room, bool $persist = false) {
+        if (!$this->watchers) return;
 
-        foreach ($this->watchers as $key => $id){
+        foreach ($this->watchers as $key => $id) {
             cancel($id);
         }
     }
