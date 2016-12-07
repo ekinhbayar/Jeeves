@@ -168,6 +168,8 @@ class Reminder extends BasePlugin
                         }
                     }
 
+                    print_r($output);
+
                     # Decide what to say and to whom
                     $message = $this->prepareReply($command, $target, $message);
 
@@ -232,17 +234,17 @@ class Reminder extends BasePlugin
      * @param string $setBy         $setBy
      * @return array
      */
-    private function findTargetAndMessage(ChatRoom $room, string $textOrTarget, string $message, string $setBy)
+    private function findTargetAndMessage(ChatRoom $room, string $textOrTarget, string $message, string $setBy): array
     {
         $pings = [];
         $substring = false;
 
         if (substr_count($message, '@') >= 1) {
             foreach (explode(" ", $message) as $key => $text) {
-                if (preg_match(self::USERNAME_REGEX, $text, $matches)) {
-                    if (null !== $pingableName = yield $this->chatClient->getPingableName($room, $matches['username'])) {
-                        $pings[] = "@{$pingableName}";
-                    }
+                if (preg_match_all(self::USERNAME_REGEX, $text, $matches)) {
+                    #if (null !== $pingableName = yield $this->chatClient->getPingableName($room, $matches['username'])) {
+                        $pings[] = rtrim("@{$matches['username'][0]}");
+                    #}
                 }
             }
         }
@@ -259,9 +261,19 @@ class Reminder extends BasePlugin
                 break;
             default:
                 if ($pings && isset($matches)) {
+                    print_r($pings);
+                    # Use the previous ping as the index if the last ping is end of $message
+                    $isLastParam = (strlen($message) === strrpos($message, "@") + strlen($pings[count($pings)-1]));
+
+                    $pingPosition = ($isLastParam)
+                        ? strpos($message, $pings[count($pings)-2]) + strlen($pings[count($pings)-2])
+                        : strrpos($message, "@") + strlen($pings[count($pings)-1]);
+
+                    if ($isLastParam) array_pop($pings);
+
                     return [
-                        'target'  => (count($matches) > 1) ? implode(", ", $pings) : $matches['username'],
-                        'message' => substr($message, strrpos($message, "@") + strlen($pings[count($pings)-1]))
+                        'target'  => implode(", ", $pings),
+                        'message' => substr($message, $pingPosition)
                     ];
                 }
 
@@ -341,9 +353,6 @@ class Reminder extends BasePlugin
 
                     if ($prevToken == 'about') $message = preg_replace("/{$token}/", '', $message, 1);
                     break;
-                case 'yourself': # remind yourself that you are a bot, jeez.
-                    $message = preg_replace("/{$token}/", '', $message, 1);
-                    return "I don't need to be reminded " . $this->translatePronouns($message);
                 case 'she':
                 case 'he':
                     $username = null;
@@ -578,7 +587,7 @@ class Reminder extends BasePlugin
 
             /* $command->getParameter(0) can be: list | examples | flush | unset | <text> | <time> */
             $textOrCommand = $command->getParameter(0);
-            $commandName = $command->getCommandName(); // <reminder|in|at>
+            $commandName   = $command->getCommandName(); // <reminder|in|at>
 
             switch ($commandName) {
                 case 'in':
